@@ -1,0 +1,83 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ipa:
+    name: Build signed iOS IPA
+    runs-on: macos-14
+    timeout-minutes: 60
+    env:
+      CI: true
+      FASTLANE_USER: ${{ secrets.FASTLANE_USER }}
+      APP_STORE_TEAM_ID: ${{ secrets.APP_STORE_TEAM_ID }}
+      MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+      MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+      MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@60606e260d2fc5762a71e64e74b2174e8ea3c8bd # v1.6.0
+        with:
+          xcode-version: '16.1'
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@56f84321dbccf38fb67ce29ab63e4754056677e0 # v1.85.1
+        with:
+          toolchain: 1.85.0
+
+      - name: Install Task
+        uses: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611 # v2
+        with:
+          version: 3.x
+
+      - name: Check signing secrets
+        shell: bash
+        run: |
+          missing=()
+          for name in FASTLANE_USER APP_STORE_TEAM_ID MATCH_GIT_URL MATCH_GIT_BASIC_AUTHORIZATION MATCH_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Configure the $name Actions secret before building the signed IPA."
+              missing+=("$name")
+            fi
+          done
+          if ((${#missing[@]})); then
+            exit 1
+          fi
+
+      - name: Install JavaScript dependencies
+        run: pnpm install
+
+      - name: Build iOS app resources and Rust libraries
+        run: task --verbose build:ios RELEASE=1
+
+      - name: Install Fastlane dependencies
+        working-directory: safari
+        run: bundle install
+
+      - name: Archive and export IPA
+        working-directory: safari
+        run: bundle exec fastlane ios build_ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: yomikiri-ios-ipa
+          path: safari/build/Yomikiri.ipa
+          if-no-files-found: error
+          retention-days: 14
