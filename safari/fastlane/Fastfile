@@ -44,26 +44,6 @@ platform :ios do
     )
   end
 
-  desc "Build an App Store-signed IPA without uploading it"
-  lane :build_ipa do
-    setup_ci if ENV['CI']
-    certificates
-    build_app(
-      scheme: "Yomikiri (iOS)",
-      verbose: true,
-      output_directory: "./build",
-      output_name: "Yomikiri.ipa",
-      export_method: "app-store",
-      export_options: {
-        provisioningProfiles: {
-          "com.yoonchae.Yomikiri" => "match AppStore com.yoonchae.Yomikiri",
-          "com.yoonchae.Yomikiri.Extension" => "match AppStore com.yoonchae.Yomikiri.Extension",
-          "com.yoonchae.Yomikiri.Yomikiri-Action" => "match AppStore com.yoonchae.Yomikiri.Yomikiri-Action"
-        }
-      }
-    )
-  end
-
   desc "Example: `fastlane set_version ver:0.3.1`"
   lane :set_version do |opts|
     increment_version_number_in_xcodeproj(

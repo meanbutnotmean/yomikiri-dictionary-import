@@ -1,4 +1,4 @@
-name: Build iOS IPA
+name: Build Unsigned iOS IPA
 
 on:
   workflow_dispatch:
@@ -8,16 +8,9 @@ permissions:
 
 jobs:
   build-ipa:
-    name: Build signed iOS IPA
+    name: Build unsigned iOS IPA for TrollStore
     runs-on: macos-15
     timeout-minutes: 60
-    env:
-      CI: true
-      FASTLANE_USER: ${{ secrets.FASTLANE_USER }}
-      APP_STORE_TEAM_ID: ${{ secrets.APP_STORE_TEAM_ID }}
-      MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
-      MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
-      MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -46,38 +39,39 @@ jobs:
         with:
           version: 3.x
 
-      - name: Check signing secrets
-        shell: bash
-        run: |
-          missing=()
-          for name in FASTLANE_USER APP_STORE_TEAM_ID MATCH_GIT_URL MATCH_GIT_BASIC_AUTHORIZATION MATCH_PASSWORD; do
-            if [[ -z "${!name}" ]]; then
-              echo "::error::Configure the $name Actions secret before building the signed IPA."
-              missing+=("$name")
-            fi
-          done
-          if ((${#missing[@]})); then
-            exit 1
-          fi
-
       - name: Install JavaScript dependencies
         run: pnpm install
 
       - name: Build iOS app resources and Rust libraries
         run: task --verbose build:ios RELEASE=1
 
-      - name: Install Fastlane dependencies
-        working-directory: safari
-        run: bundle install
+      - name: Build iOS app without code signing
+        run: >-
+          xcodebuild
+          -project "safari/Yomikiri.xcodeproj"
+          -scheme "Yomikiri (iOS)"
+          -configuration Release
+          -destination "generic/platform=iOS"
+          -derivedDataPath "$RUNNER_TEMP/YomikiriDerivedData"
+          CODE_SIGNING_ALLOWED=NO
+          CODE_SIGNING_REQUIRED=NO
+          CODE_SIGN_IDENTITY=""
+          build
 
-      - name: Archive and export IPA
-        working-directory: safari
-        run: bundle exec fastlane ios build_ipa
+      - name: Package unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="$RUNNER_TEMP/YomikiriDerivedData/Build/Products/Release-iphoneos/Yomikiri.app"
+          test -d "$app_path" || { echo "::error::Xcode did not produce Yomikiri.app at $app_path"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/YomikiriIPA/Payload" safari/build
+          ditto "$app_path" "$RUNNER_TEMP/YomikiriIPA/Payload/Yomikiri.app"
+          (cd "$RUNNER_TEMP/YomikiriIPA" && ditto -c -k --sequesterRsrc --keepParent Payload "$GITHUB_WORKSPACE/safari/build/Yomikiri-unsigned.ipa")
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: yomikiri-ios-ipa
-          path: safari/build/Yomikiri.ipa
+          name: yomikiri-ios-unsigned-trollstore
+          path: safari/build/Yomikiri-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
