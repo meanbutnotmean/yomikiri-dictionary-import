@@ -70,7 +70,10 @@ struct OptionsView: View {
             }
             .fileImporter(
                 isPresented: $showingDictionaryImporter,
-                allowedContentTypes: [.zip],
+                // Some Files providers label ZIP downloads as generic data,
+                // which makes the Open button unavailable with `.zip` alone.
+                // The ZIP parser validates the selected file after import.
+                allowedContentTypes: [.zip, .data],
                 allowsMultipleSelection: true,
                 onCompletion: importDictionaries
             )
