@@ -7,6 +7,7 @@
 
 import os.log
 import SwiftUI
+import UniformTypeIdentifiers
 import WebKit
 import YomikiriTokenizer
 
@@ -14,6 +15,12 @@ struct OptionsView: View {
     @StateObject var viewModel = ViewModel()
     @EnvironmentObject var errorHandler: ErrorHandler
     @EnvironmentObject var appState: AppState
+    @State private var showingDictionaryImporter = false
+    @State private var showingDictionaryManager = false
+    @State private var showingImportComplete = false
+    @State private var isImportingDictionaries = false
+    @State private var importCompleteMessage = ""
+    @State private var importedDictionaries: [ImportedDictionaryRecord] = []
 
     static let BACKGROUND_COLOR = Color(red: 0.95, green: 0.95, blue: 0.95)
     static let URL_OPTIONS = Bundle.main.url(forResource: "options", withExtension: "html", subdirectory: "res")!
@@ -46,6 +53,59 @@ struct OptionsView: View {
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Menu {
+                        Button(action: { showingDictionaryImporter = true }) {
+                            Label("Import Yomitan/Yomichan ZIP", systemImage: "doc.badge.plus")
+                        }
+                        Button(action: { showingDictionaryManager = true }) {
+                            Label("Manage dictionaries", systemImage: "books.vertical")
+                        }
+                    } label: {
+                        Image(systemName: "books.vertical")
+                    }
+                    .disabled(isImportingDictionaries)
+                }
+            }
+            .fileImporter(
+                isPresented: $showingDictionaryImporter,
+                allowedContentTypes: [.zip],
+                allowsMultipleSelection: true,
+                onCompletion: importDictionaries
+            )
+            .sheet(isPresented: $showingDictionaryManager) {
+                NavigationView {
+                    ImportedDictionariesView(
+                        dictionaries: importedDictionaries,
+                        onDelete: removeDictionary
+                    )
+                        .navigationTitle("External Dictionaries")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .navigationBarTrailing) {
+                                Button("Done") { showingDictionaryManager = false }
+                            }
+                        }
+                }
+                .navigationViewStyle(.stack)
+            }
+            .alert(isPresented: $showingImportComplete) {
+                Alert(
+                    title: Text("Dictionary imported"),
+                    message: Text(importCompleteMessage),
+                    dismissButton: .default(Text("OK"))
+                )
+            }
+            .overlay(alignment: .top) {
+                if isImportingDictionaries {
+                    ProgressView("Importing dictionary…")
+                        .padding(12)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                        .padding(.top, 8)
+                }
+            }
+            .onAppear(perform: reloadImportedDictionaries)
         }
         .navigationViewStyle(.stack)
         .background(OptionsView.BACKGROUND_COLOR)
@@ -87,6 +147,158 @@ struct OptionsView: View {
             await UIApplication.shared.open(url)
         }
         return true
+    }
+
+    private func importDictionaries(_ result: Result<[URL], Error>) {
+        let urls: [URL]
+        switch result {
+        case .success(let selectedURLs):
+            urls = selectedURLs
+        case .failure(let error):
+            errorHandler.handle(error)
+            return
+        }
+
+        guard !urls.isEmpty else { return }
+        isImportingDictionaries = true
+        Task {
+            do {
+                let added = try await Task.detached(priority: .userInitiated) {
+                    try ExternalDictionaryStore.importDictionaries(from: urls)
+                }.value
+                importedDictionaries = try ExternalDictionaryStore.load()
+                importCompleteMessage = added.map { "\($0.title) (\($0.entryCount) entries)" }.joined(separator: "\n")
+                showingImportComplete = true
+            } catch {
+                errorHandler.handle(error)
+            }
+            isImportingDictionaries = false
+        }
+    }
+
+    private func reloadImportedDictionaries() {
+        do {
+            importedDictionaries = try ExternalDictionaryStore.load()
+        } catch {
+            errorHandler.handle(error)
+        }
+    }
+
+    private func removeDictionary(_ dictionary: ImportedDictionaryRecord) {
+        do {
+            try ExternalDictionaryStore.remove(dictionary)
+            importedDictionaries.removeAll { $0.id == dictionary.id }
+        } catch {
+            errorHandler.handle(error)
+        }
+    }
+}
+
+private struct ImportedDictionaryRecord: Codable, Identifiable, Sendable {
+    let id: String
+    let title: String
+    let entryCount: UInt64
+    let fileName: String
+}
+
+private struct ImportedDictionariesView: View {
+    let dictionaries: [ImportedDictionaryRecord]
+    let onDelete: (ImportedDictionaryRecord) -> Void
+
+    var body: some View {
+        List {
+            if dictionaries.isEmpty {
+                Text("No external dictionaries. Import a Yomitan/Yomichan ZIP from Settings.")
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(dictionaries) { dictionary in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(dictionary.title)
+                        Text("\(dictionary.entryCount) entries")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .swipeActions {
+                        Button(role: .destructive) {
+                            onDelete(dictionary)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private enum ExternalDictionaryStore {
+    static func importDictionaries(from urls: [URL]) throws -> [ImportedDictionaryRecord] {
+        _ = try ensureUserDictionaryExists()
+        let directory = try getExternalDictionaryDirectory()
+        let existing = try load()
+        var imported: [ImportedDictionaryRecord] = []
+
+        do {
+            for url in urls {
+                imported.append(try importDictionary(from: url, to: directory))
+            }
+            try save(existing + imported)
+        } catch {
+            for dictionary in imported {
+                let url = directory.appendingPathComponent(dictionary.fileName)
+                try? FileManager.default.removeItem(at: url)
+            }
+            throw error
+        }
+        return imported
+    }
+
+    static func load() throws -> [ImportedDictionaryRecord] {
+        let catalogURL = try getExternalDictionaryDirectory().appendingPathComponent("catalog.json")
+        guard FileManager.default.fileExists(atPath: catalogURL.path) else { return [] }
+        let data = try Data(contentsOf: catalogURL)
+        return try JSONDecoder().decode([ImportedDictionaryRecord].self, from: data)
+    }
+
+    static func save(_ dictionaries: [ImportedDictionaryRecord]) throws {
+        let catalogURL = try getExternalDictionaryDirectory().appendingPathComponent("catalog.json")
+        let data = try JSONEncoder().encode(dictionaries)
+        try data.write(to: catalogURL, options: .atomic)
+    }
+
+    static func remove(_ dictionary: ImportedDictionaryRecord) throws {
+        let url = try getExternalDictionaryDirectory().appendingPathComponent(dictionary.fileName)
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
+        let remaining = try load().filter { $0.id != dictionary.id }
+        try save(remaining)
+    }
+
+    private static func importDictionary(from url: URL, to directory: URL) throws -> ImportedDictionaryRecord {
+        let hasScopedAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if hasScopedAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let id = UUID().uuidString
+        let archiveURL = directory.appendingPathComponent("\(id).zip")
+        let outputURL = directory.appendingPathComponent("\(id).yomikiridict")
+        defer { try? FileManager.default.removeItem(at: archiveURL) }
+
+        try FileManager.default.copyItem(at: url, to: archiveURL)
+        let info = try uniffiImportYomitanDictionary(
+            archivePath: archiveURL.path,
+            outputPath: outputURL.path
+        )
+        return ImportedDictionaryRecord(
+            id: id,
+            title: info.title,
+            entryCount: info.entryCount,
+            fileName: outputURL.lastPathComponent
+        )
     }
 }
 

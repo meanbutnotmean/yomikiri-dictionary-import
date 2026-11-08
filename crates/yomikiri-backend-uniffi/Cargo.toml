@@ -36,6 +36,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 uniffi = { workspace = true }
 ureq = { workspace = true }
+unicode-normalization = { workspace = true }
+zip = { workspace = true, default-features = false, features = ["deflate"] }
 yomikiri-dictionary = { workspace = true }
 yomikiri-rs = { workspace = true }
 

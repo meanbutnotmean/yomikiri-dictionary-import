@@ -9,27 +9,39 @@ use yomikiri_unidic_types::UnidicPos;
 use crate::tokenize::InnerToken;
 
 pub struct Dictionary<D: AsRef<[u8]> + 'static> {
-    inner: InnerDictionary<D>,
+    inners: Vec<InnerDictionary<D>>,
 }
 
 impl<D: AsRef<[u8]> + 'static> Dictionary<D> {
     pub fn try_new(source: D) -> Result<Dictionary<D>> {
         let inner =
             InnerDictionary::try_decode(source).context("Could not read dictionary file.")?;
-        Ok(Self { inner })
+        Ok(Self { inners: vec![inner] })
+    }
+
+    pub fn try_additional(&mut self, source: D) -> Result<()> {
+        let inner = InnerDictionary::try_decode(source)
+            .context("Could not read additional dictionary file.")?;
+        self.inners.push(inner);
+        Ok(())
     }
 
     pub fn search_term(&self, term: &str) -> Result<Vec<Entry>> {
-        let view = self.inner.borrow_view();
-        let terms = &view.term_index;
-        let idxs = terms.get(term)?;
-        let entries = view.get_entries(&idxs)?;
+        let mut entries = vec![];
+        for inner in &self.inners {
+            let view = inner.borrow_view();
+            let idxs = view.term_index.get(term)?;
+            entries.extend(view.get_entries(&idxs)?);
+        }
         Ok(entries)
     }
 
     pub fn search_meaning(&self, query: &str) -> Result<Vec<Entry>> {
-        let view = self.inner.borrow_view();
-        let entries = view.search_meaning(query)?;
+        let mut entries = vec![];
+        for inner in &self.inners {
+            let view = inner.borrow_view();
+            entries.extend(view.search_meaning(query)?);
+        }
         Ok(entries)
     }
 
@@ -46,16 +58,26 @@ impl<D: AsRef<[u8]> + 'static> Dictionary<D> {
         let len = next_prefix_bytes.len();
         next_prefix_bytes[len - 1] += 1;
 
-        let terms = &self.inner.borrow_view().term_index;
-        terms.has_starts_with_excluding(prefix)
+        self.inners.iter().any(|inner| {
+            inner
+                .borrow_view()
+                .term_index
+                .has_starts_with_excluding(prefix)
+        })
     }
 
     pub fn contains(&self, term: &str) -> bool {
-        self.inner.borrow_view().term_index.contains_key(term)
+        self.inners
+            .iter()
+            .any(|inner| inner.borrow_view().term_index.contains_key(term))
     }
 
     pub fn metadata(&self) -> &DictionaryMetadata {
-        &self.inner.borrow_view().metadata
+        &self.inners[0].borrow_view().metadata
+    }
+
+    pub fn has_additional(&self) -> bool {
+        self.inners.len() > 1
     }
 
     /// Finds entries, ordered by what best matches token
@@ -105,7 +127,7 @@ impl<D: AsRef<[u8]> + 'static> Dictionary<D> {
             match entry {
                 Entry::Word(inner) => {
                     if entry_metas.iter().any(|e| match &e.entry {
-                        Entry::Word(i) => i.id == inner.id,
+                        Entry::Word(i) => i.same_entry(&inner),
                         _ => false,
                     }) {
                         continue;

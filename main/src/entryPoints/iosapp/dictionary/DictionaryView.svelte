@@ -49,6 +49,7 @@
     <Tokenize
       {ctx}
       bind:searchText
+      placeholder="Enter Japanese text or a dictionary word."
       showCloseButton={context === "action"}
       {onShowAnkiPreview}
       onClose={async () => {
@@ -56,7 +57,7 @@
       }}
     >
       <div class="placeholder-container">
-        <div class="placeholder">Type in Japanese text</div>
+        <div class="placeholder">Type text or a word to look up</div>
       </div>
     </Tokenize>
   </div>

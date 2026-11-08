@@ -13,6 +13,7 @@
 
   export let ctx: AppCtx;
   export let searchText = "";
+  export let placeholder = "Enter Japanese word or sentence.";
   export let showCloseButton = false;
   export let onShowAnkiPreview: (
     selectedEntry: SelectedEntryForAnki,
@@ -53,7 +54,7 @@
       <input
         type="text"
         bind:value={searchText}
-        placeholder="Enter Japanese word or sentence."
+        {placeholder}
       />
       <button
         class="icon icon-clear"

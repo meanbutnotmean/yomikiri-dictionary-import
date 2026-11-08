@@ -193,3 +193,16 @@ impl DictionaryWriter<DictionaryWriterFinal> {
         Ok(())
     }
 }
+
+/// Writes entries imported from a dictionary format other than JMDict.
+pub fn write_entries<W: Write>(entries: Vec<WordEntry>, writer: &mut W) -> Result<()> {
+    DictionaryWriter {
+        state: DictionaryWriterFinal {
+            entries,
+            jmdict_creation_date: None,
+            name_entries: vec![],
+            jmnedict_creation_date: None,
+        },
+    }
+    .write(writer)
+}

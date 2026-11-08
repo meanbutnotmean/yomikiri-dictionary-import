@@ -3099,8 +3099,10 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "unicode-normalization",
  "uniffi",
  "ureq",
+ "zip",
  "yomikiri-dictionary",
  "yomikiri-rs",
 ]

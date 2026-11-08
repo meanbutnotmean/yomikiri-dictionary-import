@@ -1,5 +1,6 @@
 mod db;
 mod error;
+mod external_dictionary;
 pub mod invoke;
 
 use crate::db::RustDatabase;
@@ -135,6 +136,28 @@ pub enum DownloadDictionaryResult {
     Replace { etag: Option<String> },
 }
 
+#[derive(uniffi::Record)]
+pub struct ExternalDictionaryImportInfo {
+    pub title: String,
+    pub entry_count: u64,
+}
+
+#[uniffi::export]
+pub fn uniffi_import_yomitan_dictionary(
+    archive_path: String,
+    output_path: String,
+) -> FFIResult<ExternalDictionaryImportInfo> {
+    external_dictionary::import_yomitan_dictionary(
+        Path::new(&archive_path),
+        Path::new(&output_path),
+    )
+    .map(|info| ExternalDictionaryImportInfo {
+        title: info.title,
+        entry_count: info.entry_count,
+    })
+    .uniffi()
+}
+
 #[uniffi::export]
 pub fn uniffi_download_jmdict(
     dir: String,
@@ -250,7 +273,37 @@ pub fn uniffi_dict_schema_ver() -> u16 {
 fn create_dictionary_from_path<P: AsRef<Path>>(dict_path: P) -> Result<Dictionary<Mmap>> {
     let file = File::open(dict_path.as_ref())?;
     let mmap = unsafe { MmapOptions::new().map(&file)? };
-    Dictionary::try_new(mmap)
+    let mut dictionary = Dictionary::try_new(mmap)?;
+
+    let external_dir = dict_path
+        .as_ref()
+        .parent()
+        .map(|parent| parent.join("external-dictionaries"));
+    if let Some(external_dir) = external_dir {
+        if let Ok(files) = fs::read_dir(external_dir) {
+            let mut paths = files
+                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                .filter(|path| {
+                    path.extension().and_then(|ext| ext.to_str()) == Some("yomikiridict")
+                })
+                .collect::<Vec<_>>();
+            paths.sort();
+
+            for path in paths {
+                let result = (|| -> Result<()> {
+                    let file = File::open(&path)?;
+                    let mmap = unsafe { MmapOptions::new().map(&file)? };
+                    dictionary.try_additional(mmap)?;
+                    Ok(())
+                })();
+                if let Err(error) = result {
+                    log::warn!("Skipping external dictionary {:?}: {error:#}", path);
+                }
+            }
+        }
+    }
+
+    Ok(dictionary)
 }
 
 cfg_apple! {

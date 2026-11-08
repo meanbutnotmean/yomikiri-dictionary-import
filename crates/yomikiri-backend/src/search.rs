@@ -25,6 +25,18 @@ impl<D: AsRef<[u8]> + 'static> SharedBackend<D> {
 
             Ok(result)
         } else {
+            if self.dictionary.has_additional() {
+                if let Some(result) = self.search_term_as_is(query)? {
+                    return Ok(result);
+                }
+                let lowercase_query = query.to_lowercase();
+                if lowercase_query != query {
+                    if let Some(result) = self.search_term_as_is(&lowercase_query)? {
+                        return Ok(result);
+                    }
+                }
+            }
+
             let mut entries = self.dictionary.search_meaning(query)?;
             if entries.len() > 100 {
                 entries = entries.into_iter().take(MAX_ENTRY_LEN).collect();

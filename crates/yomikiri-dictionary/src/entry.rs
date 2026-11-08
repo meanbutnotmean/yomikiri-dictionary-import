@@ -318,6 +318,15 @@ impl WordEntry {
         Ok(())
     }
 
+    /// Compares both identity and content. Entry IDs are only unique within one dictionary.
+    pub fn same_entry(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.kanjis == other.kanjis
+            && self.readings == other.readings
+            && self.grouped_senses == other.grouped_senses
+            && self.priority == other.priority
+    }
+
     pub fn main_reading(&self) -> &str {
         &self.readings.first().unwrap().reading
     }
