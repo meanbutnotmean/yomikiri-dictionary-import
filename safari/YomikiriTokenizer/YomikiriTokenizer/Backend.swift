@@ -93,5 +93,5 @@ func migrateDatabaseFrom0(db: RustDatabase) throws {
 }
 
 private func getSharedContainerURL() -> URL? {
-    return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: APP_GROUP_ID)
+    return try? getSharedDirectory()
 }
