@@ -7,6 +7,7 @@
 
 import os.log
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 import WebKit
 import YomikiriTokenizer
@@ -68,14 +69,11 @@ struct OptionsView: View {
                     .disabled(isImportingDictionaries)
                 }
             }
-            .fileImporter(
-                isPresented: $showingDictionaryImporter,
-                // File providers may report ZIPs using a vendor-specific type.
-                // Allow selection and validate the archive in the importer.
-                allowedContentTypes: [.item],
-                allowsMultipleSelection: true,
-                onCompletion: importDictionaries
-            )
+            .sheet(isPresented: $showingDictionaryImporter) {
+                DictionaryDocumentPicker(isPresented: $showingDictionaryImporter) { urls in
+                    importDictionaries(.success(urls))
+                }
+            }
             .sheet(isPresented: $showingDictionaryManager) {
                 NavigationView {
                     ImportedDictionariesView(
@@ -192,6 +190,43 @@ struct OptionsView: View {
             importedDictionaries.removeAll { $0.id == dictionary.id }
         } catch {
             errorHandler.handle(error)
+        }
+    }
+}
+
+private struct DictionaryDocumentPicker: UIViewControllerRepresentable {
+    @Binding var isPresented: Bool
+    let onPick: ([URL]) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
+        picker.allowsMultipleSelection = true
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ picker: UIDocumentPickerViewController, context: Context) {
+        context.coordinator.parent = self
+    }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        var parent: DictionaryDocumentPicker
+
+        init(parent: DictionaryDocumentPicker) {
+            self.parent = parent
+        }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            parent.isPresented = false
+            parent.onPick(urls)
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            parent.isPresented = false
         }
     }
 }
